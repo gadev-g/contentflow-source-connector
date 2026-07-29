@@ -5,4 +5,5 @@ if (!defined('TYPO3_MODE')) {
 }
 
 $GLOBALS['TYPO3_CONF_VARS']['FE']['eID_include']['contentflow_migration_export']
-    = 'EXT:contentflow_source_connector/Classes/Eid/ExportEndpoint.php';
+    = \TYPO3\CMS\Core\Utility\ExtensionManagementUtility::extPath('contentflow_source_connector')
+    .'Classes/Eid/ExportEndpoint.php';
