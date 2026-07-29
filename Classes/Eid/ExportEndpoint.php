@@ -307,17 +307,28 @@ function contentflowSourceShortcutRecords(array $record, $connectionPool)
 {
     $references = isset($record['records']) ? (string) $record['records'] : '';
 
-    if (!preg_match_all('/(?:^|,)tt_content_(\d+)(?=,|$)/', $references, $matches)) {
+    if (!preg_match_all('/(?:^|,)\s*(tt_content|pages)_(\d+)(?=\s*,|$)/', $references, $matches, PREG_SET_ORDER)) {
         return array();
     }
 
-    $connection = $connectionPool->getConnectionForTable('tt_content');
     $records = array();
 
-    foreach ($matches[1] as $uid) {
+    foreach ($matches as $match) {
+        $table = (string) $match[1];
+        $uid = (int) $match[2];
+
+        if ('pages' === $table) {
+            $records = array_merge(
+                $records,
+                contentflowSourcePageContentRecords($uid, $connectionPool)
+            );
+            continue;
+        }
+
+        $connection = $connectionPool->getConnectionForTable('tt_content');
         $row = $connection->fetchAssoc(
             'SELECT * FROM tt_content WHERE uid = ? AND deleted = 0 AND hidden = 0',
-            array((int) $uid)
+            array($uid)
         );
 
         if (is_array($row)) {
@@ -326,6 +337,22 @@ function contentflowSourceShortcutRecords(array $record, $connectionPool)
     }
 
     return $records;
+}
+
+function contentflowSourcePageContentRecords($pageUid, $connectionPool)
+{
+    $connection = $connectionPool->getConnectionForTable('tt_content');
+    $columns = $connection->getSchemaManager()->listTableColumns('tt_content');
+    $rootCondition = isset($columns['tx_gridelements_container'])
+        ? ' AND (tx_gridelements_container = 0 OR tx_gridelements_container IS NULL)'
+        : '';
+
+    return $connection->fetchAll(
+        'SELECT * FROM tt_content WHERE pid = ? AND deleted = 0 AND hidden = 0'
+        .' AND sys_language_uid IN (0, -1)'.$rootCondition
+        .' ORDER BY colPos, sorting',
+        array((int) $pageUid)
+    );
 }
 
 function contentflowSourceGridChildren(
