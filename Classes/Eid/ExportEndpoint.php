@@ -79,9 +79,13 @@ function contentflowSourceExport(array $configuration)
     }
 
     $contentConnection = $connectionPool->getConnectionForTable('tt_content');
+    $contentColumns = $contentConnection->getSchemaManager()->listTableColumns('tt_content');
+    $rootCondition = isset($contentColumns['tx_gridelements_container'])
+        ? ' AND (tx_gridelements_container = 0 OR tx_gridelements_container IS NULL)'
+        : '';
     $records = $contentConnection->fetchAll(
         'SELECT * FROM tt_content WHERE pid = ? AND deleted = 0 AND hidden = 0'
-        .' AND sys_language_uid IN (0, -1) ORDER BY colPos, sorting',
+        .' AND sys_language_uid IN (0, -1)'.$rootCondition.' ORDER BY colPos, sorting',
         array($pageUid)
     );
     $counter = 0;
@@ -134,6 +138,35 @@ function contentflowSourceExportRecord(
 
     $relations = array();
     $media = array();
+
+    if (
+        'tt_content' === $table
+        && 'shortcut' === (isset($record['CType']) ? (string) $record['CType'] : '')
+    ) {
+        $shortcut = contentflowSourceResolveShortcut($record, $connectionPool);
+
+        if (is_array($shortcut)) {
+            $shortcut['colPos'] = isset($record['colPos']) ? $record['colPos'] : 0;
+            $shortcut['sorting'] = isset($record['sorting']) ? $record['sorting'] : 0;
+            $shortcut['tx_gridelements_container'] = isset($record['tx_gridelements_container'])
+                ? $record['tx_gridelements_container']
+                : 0;
+            $shortcut['tx_gridelements_columns'] = isset($record['tx_gridelements_columns'])
+                ? $record['tx_gridelements_columns']
+                : 0;
+            $resolved = contentflowSourceExportRecord(
+                'tt_content',
+                $shortcut,
+                $connectionPool,
+                $configuration,
+                $depth,
+                $counter
+            );
+            $resolved['source_reference'] = 'shortcut:'.(int) $record['uid'];
+
+            return $resolved;
+        }
+    }
 
     if ($depth < 5) {
         $columns = isset($GLOBALS['TCA'][$table]['columns']) ? $GLOBALS['TCA'][$table]['columns'] : array();
@@ -192,6 +225,20 @@ function contentflowSourceExportRecord(
                 );
             }
         }
+
+        if ('tt_content' === $table) {
+            $gridChildren = contentflowSourceGridChildren(
+                (int) $record['uid'],
+                $connectionPool,
+                $configuration,
+                $depth + 1,
+                $counter
+            );
+
+            if (!empty($gridChildren)) {
+                $relations['contentflow_grid_children'] = $gridChildren;
+            }
+        }
     }
 
     return array(
@@ -204,6 +251,59 @@ function contentflowSourceExportRecord(
         'relations' => $relations,
         'media' => $media,
     );
+}
+
+function contentflowSourceResolveShortcut(array $record, $connectionPool)
+{
+    $references = isset($record['records']) ? (string) $record['records'] : '';
+
+    if (!preg_match('/(?:^|,)tt_content_(\d+)(?:,|$)/', $references, $matches)) {
+        return null;
+    }
+
+    $connection = $connectionPool->getConnectionForTable('tt_content');
+    $row = $connection->fetchAssoc(
+        'SELECT * FROM tt_content WHERE uid = ? AND deleted = 0 AND hidden = 0',
+        array((int) $matches[1])
+    );
+
+    return is_array($row) ? $row : null;
+}
+
+function contentflowSourceGridChildren(
+    $parentUid,
+    $connectionPool,
+    array $configuration,
+    $depth,
+    &$counter
+) {
+    $connection = $connectionPool->getConnectionForTable('tt_content');
+    $columns = $connection->getSchemaManager()->listTableColumns('tt_content');
+
+    if (!isset($columns['tx_gridelements_container'])) {
+        return array();
+    }
+
+    $children = $connection->fetchAll(
+        'SELECT * FROM tt_content WHERE tx_gridelements_container = ?'
+        .' AND deleted = 0 AND hidden = 0 AND sys_language_uid IN (0, -1)'
+        .' ORDER BY tx_gridelements_columns, sorting',
+        array($parentUid)
+    );
+    $exported = array();
+
+    foreach ($children as $child) {
+        $exported[] = contentflowSourceExportRecord(
+            'tt_content',
+            $child,
+            $connectionPool,
+            $configuration,
+            $depth,
+            $counter
+        );
+    }
+
+    return $exported;
 }
 
 function contentflowSourceMediaReferences(
