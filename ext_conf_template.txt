@@ -1,0 +1,11 @@
+# cat=security; type=string; label=SHA-256 migration token hash
+migrationTokenHash =
+
+# cat=security; type=string; label=Media signing secret (optional; TYPO3 encryption key is used when empty)
+mediaSigningSecret =
+
+# cat=export; type=int+; label=Maximum exported records
+maxExportRecords = 500
+
+# cat=export; type=int+; label=Maximum media size in bytes
+maxMediaBytes = 20000000

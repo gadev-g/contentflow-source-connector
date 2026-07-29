@@ -1,0 +1,28 @@
+{
+  "name": "gadev-g/contentflow-typo3-source-connector",
+  "description": "Read-only ContentFlow migration source connector for TYPO3 8.7.",
+  "type": "typo3-cms-extension",
+  "license": "proprietary",
+  "authors": [
+    {
+      "name": "GA DEV - Ahmet Gürer",
+      "email": "info@ga-dev.de"
+    }
+  ],
+  "require": {
+    "php": ">=7.0 <8.0",
+    "typo3/cms-core": "^8.7",
+    "typo3/cms-frontend": "^8.7"
+  },
+  "replace": {
+    "typo3-ter/contentflow-source-connector": "self.version"
+  },
+  "extra": {
+    "typo3/cms": {
+      "extension-key": "contentflow_source_connector"
+    }
+  },
+  "config": {
+    "sort-packages": true
+  }
+}
