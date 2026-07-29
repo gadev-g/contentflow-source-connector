@@ -322,6 +322,38 @@ function contentflowSourceResolvePageUid($connection, $sourceUrl)
     }
 
     $path = trim(rawurldecode((string) parse_url($sourceUrl, PHP_URL_PATH)), '/');
+
+    if ('' !== $path) {
+        $schemaManager = $connection->getSchemaManager();
+        $tableNames = $schemaManager->listTableNames();
+
+        if (in_array('tx_realurl_pathcache', $tableNames, true)) {
+            $pathCacheColumns = $schemaManager->listTableColumns('tx_realurl_pathcache');
+            $pathConditions = array('pagepath = ?');
+            $pathValues = array($path);
+
+            if (isset($pathCacheColumns['language_id'])) {
+                $pathConditions[] = 'language_id IN (0, -1)';
+            }
+
+            if (isset($pathCacheColumns['expire'])) {
+                $pathConditions[] = '(expire = 0 OR expire > ?)';
+                $pathValues[] = time();
+            }
+
+            $pathCacheRow = $connection->fetchAssoc(
+                'SELECT page_id FROM tx_realurl_pathcache WHERE '
+                .implode(' AND ', $pathConditions)
+                .' ORDER BY page_id DESC',
+                $pathValues
+            );
+
+            if (is_array($pathCacheRow) && !empty($pathCacheRow['page_id'])) {
+                return (int) $pathCacheRow['page_id'];
+            }
+        }
+    }
+
     $segment = basename($path);
     $columns = $connection->getSchemaManager()->listTableColumns('pages');
     $conditions = array();
