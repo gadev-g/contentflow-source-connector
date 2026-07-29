@@ -93,16 +93,25 @@ function contentflowSourceExport(array $configuration)
     $media = array();
 
     foreach ($records as $record) {
-        $exported = contentflowSourceExportRecord(
-            'tt_content',
-            $record,
-            $connectionPool,
-            $configuration,
-            0,
-            $counter
-        );
-        $elements[] = $exported;
-        $media = array_merge($media, contentflowSourceCollectMedia($exported));
+        $expandedRecords = contentflowSourceExpandShortcutRecords($record, $connectionPool);
+
+        foreach ($expandedRecords as $expandedRecord) {
+            $exported = contentflowSourceExportRecord(
+                'tt_content',
+                $expandedRecord,
+                $connectionPool,
+                $configuration,
+                0,
+                $counter
+            );
+
+            if ((int) $expandedRecord['uid'] !== (int) $record['uid']) {
+                $exported['source_reference'] = 'shortcut:'.(int) $record['uid'];
+            }
+
+            $elements[] = $exported;
+            $media = array_merge($media, contentflowSourceCollectMedia($exported));
+        }
     }
 
     contentflowSourceJson(array(
@@ -255,19 +264,62 @@ function contentflowSourceExportRecord(
 
 function contentflowSourceResolveShortcut(array $record, $connectionPool)
 {
+    $records = contentflowSourceShortcutRecords($record, $connectionPool);
+
+    return isset($records[0]) ? $records[0] : null;
+}
+
+function contentflowSourceExpandShortcutRecords(array $record, $connectionPool)
+{
+    if ('shortcut' !== (isset($record['CType']) ? (string) $record['CType'] : '')) {
+        return array($record);
+    }
+
+    $records = contentflowSourceShortcutRecords($record, $connectionPool);
+
+    if (empty($records)) {
+        return array($record);
+    }
+
+    foreach ($records as &$resolved) {
+        $resolved['colPos'] = isset($record['colPos']) ? $record['colPos'] : 0;
+        $resolved['sorting'] = isset($record['sorting']) ? $record['sorting'] : 0;
+        $resolved['tx_gridelements_container'] = isset($record['tx_gridelements_container'])
+            ? $record['tx_gridelements_container']
+            : 0;
+        $resolved['tx_gridelements_columns'] = isset($record['tx_gridelements_columns'])
+            ? $record['tx_gridelements_columns']
+            : 0;
+    }
+
+    unset($resolved);
+
+    return $records;
+}
+
+function contentflowSourceShortcutRecords(array $record, $connectionPool)
+{
     $references = isset($record['records']) ? (string) $record['records'] : '';
 
-    if (!preg_match('/(?:^|,)tt_content_(\d+)(?:,|$)/', $references, $matches)) {
-        return null;
+    if (!preg_match_all('/(?:^|,)tt_content_(\d+)(?=,|$)/', $references, $matches)) {
+        return array();
     }
 
     $connection = $connectionPool->getConnectionForTable('tt_content');
-    $row = $connection->fetchAssoc(
-        'SELECT * FROM tt_content WHERE uid = ? AND deleted = 0 AND hidden = 0',
-        array((int) $matches[1])
-    );
+    $records = array();
 
-    return is_array($row) ? $row : null;
+    foreach ($matches[1] as $uid) {
+        $row = $connection->fetchAssoc(
+            'SELECT * FROM tt_content WHERE uid = ? AND deleted = 0 AND hidden = 0',
+            array((int) $uid)
+        );
+
+        if (is_array($row)) {
+            $records[] = $row;
+        }
+    }
+
+    return $records;
 }
 
 function contentflowSourceGridChildren(
@@ -293,14 +345,22 @@ function contentflowSourceGridChildren(
     $exported = array();
 
     foreach ($children as $child) {
-        $exported[] = contentflowSourceExportRecord(
-            'tt_content',
-            $child,
-            $connectionPool,
-            $configuration,
-            $depth,
-            $counter
-        );
+        foreach (contentflowSourceExpandShortcutRecords($child, $connectionPool) as $expandedChild) {
+            $record = contentflowSourceExportRecord(
+                'tt_content',
+                $expandedChild,
+                $connectionPool,
+                $configuration,
+                $depth,
+                $counter
+            );
+
+            if ((int) $expandedChild['uid'] !== (int) $child['uid']) {
+                $record['source_reference'] = 'shortcut:'.(int) $child['uid'];
+            }
+
+            $exported[] = $record;
+        }
     }
 
     return $exported;
