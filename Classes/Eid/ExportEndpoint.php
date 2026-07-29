@@ -250,15 +250,21 @@ function contentflowSourceExportRecord(
         }
     }
 
+    $editableFields = contentflowSourceEditableFields($table, $record);
+
     return array(
         'source_table' => $table,
         'source_uid' => (int) $record['uid'],
         'type' => isset($record['CType']) ? (string) $record['CType'] : $table,
         'column' => isset($record['colPos']) ? (int) $record['colPos'] : 0,
         'sorting' => isset($record['sorting']) ? (int) $record['sorting'] : 0,
-        'fields' => contentflowSourceEditableFields($table, $record),
+        'fields' => $editableFields,
         'relations' => $relations,
         'media' => $media,
+        'linked_files' => contentflowSourceLinkedDocuments(
+            $editableFields,
+            $configuration
+        ),
     );
 }
 
@@ -426,6 +432,102 @@ function contentflowSourceMediaReferences(
     }
 
     return $media;
+}
+
+function contentflowSourceLinkedDocuments(array $fields, array $configuration)
+{
+    $documents = array();
+    $seen = array();
+
+    foreach ($fields as $value) {
+        if (!is_string($value) || '' === trim($value)) {
+            continue;
+        }
+
+        $links = array();
+
+        if (preg_match_all('/href\s*=\s*(["\'])(.*?)\1/i', $value, $matches)) {
+            $links = array_merge($links, $matches[2]);
+        }
+
+        if (preg_match_all('/<link\s+([^\s>]+)[^>]*>/i', $value, $matches)) {
+            $links = array_merge($links, $matches[1]);
+        }
+
+        foreach ($links as $link) {
+            $originalHref = html_entity_decode(trim((string) $link), ENT_QUOTES, 'UTF-8');
+            $file = contentflowSourceResolveLinkedFile($originalHref);
+
+            if (null === $file || isset($seen[(int) $file->getUid()])) {
+                continue;
+            }
+
+            $size = (int) $file->getSize();
+            $maximumSize = max(
+                1,
+                isset($configuration['maxMediaBytes']) ? (int) $configuration['maxMediaBytes'] : 20000000
+            );
+
+            if (
+                $size <= 0
+                || $size > $maximumSize
+                || 'application/pdf' !== strtolower((string) $file->getMimeType())
+            ) {
+                continue;
+            }
+
+            $contents = $file->getContents();
+            $expires = time() + 3600;
+            $signature = contentflowSourceMediaSignature((int) $file->getUid(), $expires, $configuration);
+            $documents[] = array(
+                'source_file_uid' => (int) $file->getUid(),
+                'original_href' => $originalHref,
+                'name' => (string) $file->getName(),
+                'mime_type' => (string) $file->getMimeType(),
+                'size' => $size,
+                'sha256' => hash('sha256', $contents),
+                'download_url' => contentflowSourceBaseUrl()
+                    .'/?eID=contentflow_migration_export&contentflow_action=media'
+                    .'&file='.$file->getUid()
+                    .'&expires='.$expires
+                    .'&signature='.rawurlencode($signature),
+            );
+            $seen[(int) $file->getUid()] = true;
+        }
+    }
+
+    return $documents;
+}
+
+function contentflowSourceResolveLinkedFile($href)
+{
+    $fileUid = 0;
+
+    if (preg_match('/^file:(\d+)$/i', $href, $match)) {
+        $fileUid = (int) $match[1];
+    } elseif (preg_match('/^t3:\/\/file\?[^#]*\buid=(\d+)/i', $href, $match)) {
+        $fileUid = (int) $match[1];
+    }
+
+    try {
+        $resourceFactory = GeneralUtility::makeInstance(ResourceFactory::class);
+
+        if ($fileUid > 0) {
+            return $resourceFactory->getFileObject($fileUid);
+        }
+
+        $path = rawurldecode((string) parse_url($href, PHP_URL_PATH));
+
+        if (!preg_match('#(?:^|/)fileadmin/(.+)$#i', $path, $match)) {
+            return null;
+        }
+
+        $identifier = '/'.ltrim($match[1], '/');
+
+        return $resourceFactory->getFileObjectFromCombinedIdentifier('1:'.$identifier);
+    } catch (Exception $exception) {
+        return null;
+    }
 }
 
 function contentflowSourceDownloadMedia(array $configuration)
