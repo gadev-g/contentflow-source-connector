@@ -5,9 +5,11 @@ use TYPO3\CMS\Core\Resource\ResourceFactory;
 use TYPO3\CMS\Core\Utility\GeneralUtility;
 use TYPO3\CMS\Frontend\Utility\EidUtility;
 
-EidUtility::initTCA();
-
 try {
+    if (method_exists(EidUtility::class, 'initTCA')) {
+        EidUtility::initTCA();
+    }
+
     $configuration = contentflowSourceConfiguration();
     $action = isset($_GET['contentflow_action']) ? (string) $_GET['contentflow_action'] : 'export';
 
@@ -17,7 +19,7 @@ try {
     }
 
     contentflowSourceExport($configuration);
-} catch (Exception $exception) {
+} catch (Throwable $exception) {
     if (http_response_code() < 400) {
         http_response_code(422);
     }
