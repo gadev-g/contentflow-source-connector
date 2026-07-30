@@ -616,8 +616,12 @@ function contentflowSourceResolvePageUid($connection, $sourceUrl)
         $schemaManager = $connection->getSchemaManager();
         $tableNames = $schemaManager->listTableNames();
 
-        if (in_array('tx_realurl_pathcache', $tableNames, true)) {
-            $pathCacheColumns = $schemaManager->listTableColumns('tx_realurl_pathcache');
+        foreach (array('tx_realurl_pathdata', 'tx_realurl_pathcache') as $pathTable) {
+            if (!in_array($pathTable, $tableNames, true)) {
+                continue;
+            }
+
+            $pathCacheColumns = $schemaManager->listTableColumns($pathTable);
             $pathConditions = array('pagepath = ?');
             $pathValues = array($path);
 
@@ -631,7 +635,7 @@ function contentflowSourceResolvePageUid($connection, $sourceUrl)
             }
 
             $pathCacheRow = $connection->fetchAssoc(
-                'SELECT page_id FROM tx_realurl_pathcache WHERE '
+                'SELECT page_id FROM '.$pathTable.' WHERE '
                 .implode(' AND ', $pathConditions)
                 .' ORDER BY page_id DESC',
                 $pathValues
@@ -656,7 +660,7 @@ function contentflowSourceResolvePageUid($connection, $sourceUrl)
     }
 
     if (empty($conditions)) {
-        return 0;
+        return contentflowSourceResolvePageUidFromHierarchy($connection, $path, $columns);
     }
 
     $row = $connection->fetchAssoc(
@@ -664,7 +668,93 @@ function contentflowSourceResolvePageUid($connection, $sourceUrl)
         $values
     );
 
-    return is_array($row) ? (int) $row['uid'] : 0;
+    if (is_array($row)) {
+        return (int) $row['uid'];
+    }
+
+    return contentflowSourceResolvePageUidFromHierarchy($connection, $path, $columns);
+}
+
+function contentflowSourceResolvePageUidFromHierarchy($connection, $path, array $columns)
+{
+    $segments = array_values(array_filter(explode('/', trim($path, '/'))));
+
+    if (empty($segments)) {
+        return 0;
+    }
+
+    $selectFields = array('uid', 'pid', 'title', 'nav_title');
+
+    foreach (array('alias', 'tx_realurl_pathsegment') as $field) {
+        if (isset($columns[$field])) {
+            $selectFields[] = $field;
+        }
+    }
+
+    $pages = $connection->fetchAll(
+        'SELECT '.implode(', ', $selectFields).' FROM pages WHERE deleted = 0 AND hidden = 0'
+    );
+    $pagesByUid = array();
+
+    foreach ($pages as $page) {
+        $pagesByUid[(int) $page['uid']] = $page;
+    }
+
+    foreach ($pages as $page) {
+        $index = count($segments) - 1;
+        $candidate = $page;
+
+        while ($index >= 0 && is_array($candidate)) {
+            if (!contentflowSourcePageMatchesSpeakingSegment($candidate, $segments[$index])) {
+                break;
+            }
+
+            --$index;
+
+            if ($index < 0) {
+                return (int) $page['uid'];
+            }
+
+            $parentUid = isset($candidate['pid']) ? (int) $candidate['pid'] : 0;
+            $candidate = isset($pagesByUid[$parentUid]) ? $pagesByUid[$parentUid] : null;
+        }
+    }
+
+    return 0;
+}
+
+function contentflowSourcePageMatchesSpeakingSegment(array $page, $segment)
+{
+    foreach (array('tx_realurl_pathsegment', 'alias', 'nav_title', 'title') as $field) {
+        if (!isset($page[$field]) || '' === trim((string) $page[$field])) {
+            continue;
+        }
+
+        if (contentflowSourceSpeakingUrlSegment((string) $page[$field]) === strtolower((string) $segment)) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+function contentflowSourceSpeakingUrlSegment($value)
+{
+    $value = str_replace(
+        array('Ä', 'Ö', 'Ü', 'ä', 'ö', 'ü', 'ß'),
+        array('Ae', 'Oe', 'Ue', 'ae', 'oe', 'ue', 'ss'),
+        trim((string) $value)
+    );
+    $transliterated = iconv('UTF-8', 'ASCII//TRANSLIT//IGNORE', $value);
+
+    if (false !== $transliterated) {
+        $value = $transliterated;
+    }
+
+    $value = strtolower($value);
+    $value = preg_replace('/[^a-z0-9]+/', '-', $value);
+
+    return trim($value, '-');
 }
 
 function contentflowSourceEditableFields($table, array $record)
